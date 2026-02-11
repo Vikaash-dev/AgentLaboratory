@@ -88,6 +88,16 @@ def query_model(model_str, prompt, system_prompt, openai_api_key=None, gemini_ap
                     ),
                 )
                 answer = response.text
+            elif model_str == "gemini-2.5-flash":
+                client = genai_client.Client(api_key=gemini_api_key)
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash-preview-05-20",
+                    contents=system_prompt + "\n\n" + prompt,
+                    config=genai_types.GenerateContentConfig(
+                        thinking_config=genai_types.ThinkingConfig(thinking_budget=1024)
+                    ),
+                )
+                answer = response.text
             elif model_str == "gemini-2.0-pro":
                 genai.configure(api_key=gemini_api_key)
                 model = genai.GenerativeModel(model_name="gemini-2.0-pro-exp-02-05", system_instruction=system_prompt)
