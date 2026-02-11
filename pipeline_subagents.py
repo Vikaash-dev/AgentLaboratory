@@ -92,7 +92,7 @@ class ResearchAgent:
             logger.warning("tavily-python not installed, skipping web search")
             return []
         except Exception as e:
-            logger.warning(f"Tavily search failed: {e}")
+            logger.warning(f"Tavily search failed for query \"{query}\": {e}")
             return []
 
     def _load_static_fallback(self):
@@ -523,7 +523,7 @@ FIXES:
                 severity = line.replace("SEVERITY:", "").strip().lower()
             elif line.startswith("DIAGNOSIS:"):
                 diagnosis = line.replace("DIAGNOSIS:", "").strip()
-            elif line.startswith("- ") and fixes is not None:
+            elif line.startswith("- "):
                 fixes.append(line[2:])
 
         logger.info(f"ErrorAnalysis: errors={has_errors}, severity={severity}")

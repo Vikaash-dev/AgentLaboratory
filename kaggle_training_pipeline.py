@@ -322,7 +322,7 @@ IMPORTANT:
         @param enable_gpu: (bool) whether to use GPU
         @return: (dict) with 'status', 'logs', 'errors', 'metrics'
         """
-        # LoggingAgent adds structured logging
+        # Inject structured logging (uses inject_logging_code for deterministic output)
         instrumented_code = inject_logging_code(code)
 
         # Save to file
