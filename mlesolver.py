@@ -15,11 +15,13 @@ import sys, os
 
 
 os.environ["JOBLIB_VERBOSITY"] = "0"
-logging.basicConfig(level=logging.WARNING)
+_mle_log_level = os.getenv("MLE_LOG_LEVEL", "WARNING").upper()
+logging.basicConfig(level=getattr(logging, _mle_log_level, logging.WARNING))
 warnings.filterwarnings("ignore")
 warnings.simplefilter(action='ignore', category=FutureWarning)
 import logging
 logging.getLogger('sklearn.model_selection').setLevel(logging.WARNING)
+_mle_logger = logging.getLogger("mlesolver")
 
 
 GLOBAL_REPAIR_ATTEMPTS = 2
@@ -201,7 +203,9 @@ def code_repair(code, error, ctype, REPAIR_LLM, openai_api_key=None):
 
 
 class MLESolver:
-    def __init__(self, dataset_code, openai_api_key=None, notes=None, max_steps=10, insights=None, plan=None, llm_str=None):
+    def __init__(self, dataset_code, openai_api_key=None, notes=None, max_steps=10,
+                 insights=None, plan=None, llm_str=None, use_kaggle=False,
+                 kaggle_gpu=True, kaggle_datasets=None):
         self.supress_print = False
         if notes is None: self.notes = []
         else: self.notes = notes
@@ -221,6 +225,13 @@ class MLESolver:
         self.prev_code_ret = str()
         self.should_execute_code = True
         self.openai_api_key = openai_api_key
+        self.error_history = []
+        self.execution_log = []
+        self.device = detect_device()
+        self.use_kaggle = use_kaggle
+        self.kaggle_gpu = kaggle_gpu
+        self.kaggle_datasets = kaggle_datasets or []
+        _mle_logger.info(f"MLESolver initialized — device: {self.device}, kaggle: {self.use_kaggle}")
 
     def initial_solve(self):
         """
@@ -463,15 +474,28 @@ class MLESolver:
 
     def feedback(self, code_return):
         """
-        Provide execution feedback after command is run
+        Provide execution feedback after command is run.
+        Tracks errors in error_history for learning across iterations.
         @param code_return: (str) return from code execution
         @return: (str) feedback string
         """
         if code_return is not None:
             code_str = self.generate_code_lines(self.code_lines)
+            self.execution_log.append({
+                "code": code_str[:500],
+                "output": str(code_return)[:500],
+                "has_error": "[CODE EXECUTION ERROR]" in str(code_return),
+            })
             if "[CODE EXECUTION ERROR]" in code_return:
-                if not self.supress_print: print(f"@@@@ ERROR")  # , {code_return.replace('\n', '')}")
-                reflect_prompt = f"This is your code: {code_str}\n\nYour code returned the following error {code_return}. Please provide a detailed reflection on why this error was returned, which lines in the code caused this error, and exactly (line by line) how you hope to fix this in the next update. This step is mostly meant to reflect in order to help your future self fix the error better. Do not provide entirely new code but provide suggestions on how to fix the bug using LINE EDITS."
+                self.error_history.append(code_return[:300])
+                _mle_logger.warning(f"Execution error: {code_return[:200]}")
+                if not self.supress_print: print(f"@@@@ ERROR")
+                past_errors = ""
+                if len(self.error_history) > 1:
+                    past_errors = "\n\nPREVIOUS ERRORS (do NOT repeat these):\n" + "\n".join(
+                        f"- {e}" for e in self.error_history[-5:]
+                    )
+                reflect_prompt = f"This is your code: {code_str}\n\nYour code returned the following error {code_return}. Please provide a detailed reflection on why this error was returned, which lines in the code caused this error, and exactly (line by line) how you hope to fix this in the next update. This step is mostly meant to reflect in order to help your future self fix the error better. Do not provide entirely new code but provide suggestions on how to fix the bug using LINE EDITS.{past_errors}"
             elif os.path.exists("submission.csv"):
                 self.prev_working_code = copy(self.code_lines)
                 grade_return = get_score(self.plan, "\n".join(self.prev_working_code), code_return, openai_api_key=self.openai_api_key)[0]
@@ -552,13 +576,21 @@ class MLESolver:
 
     def run_code(self):
         """
-        Actually execute the code that was generated
+        Actually execute the code that was generated.
+        Routes to Kaggle execution when use_kaggle is enabled for GPU-heavy tasks.
         @return: (str) code return
         """
         if self.prev_code_ret is not None:
             return self.prev_code_ret
         elif self.should_execute_code:
-            return execute_code("\n".join(self.code_lines))
+            code_str = "\n".join(self.code_lines)
+            if self.use_kaggle:
+                return execute_code_kaggle(
+                    code_str,
+                    enable_gpu=self.kaggle_gpu,
+                    dataset_sources=self.kaggle_datasets,
+                )
+            return execute_code(code_str)
         return "Changes have not yet been made to the code."
 
 

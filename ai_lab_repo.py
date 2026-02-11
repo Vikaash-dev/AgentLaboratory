@@ -17,7 +17,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 class LaboratoryWorkflow:
-    def __init__(self, research_topic, openai_api_key, max_steps=100, num_papers_lit_review=5, agent_model_backbone=f"{DEFAULT_LLM_BACKBONE}", notes=list(), human_in_loop_flag=None, compile_pdf=True, mlesolver_max_steps=3, papersolver_max_steps=5, paper_index=0, except_if_fail=False, parallelized=False, lab_dir=None, lab_index=0, agentRxiv=False, agentrxiv_papers=5):
+    def __init__(self, research_topic, openai_api_key, max_steps=100, num_papers_lit_review=5, agent_model_backbone=f"{DEFAULT_LLM_BACKBONE}", notes=list(), human_in_loop_flag=None, compile_pdf=True, mlesolver_max_steps=3, papersolver_max_steps=5, paper_index=0, except_if_fail=False, parallelized=False, lab_dir=None, lab_index=0, agentRxiv=False, agentrxiv_papers=5, use_kaggle=False, kaggle_gpu=True, kaggle_datasets=None):
         """
         Initialize laboratory workflow
         @param research_topic: (str) description of research idea to explore
@@ -25,6 +25,9 @@ class LaboratoryWorkflow:
         @param num_papers_lit_review: (int) number of papers to include in the lit review
         @param agent_model_backbone: (str or dict) model backbone to use for agents
         @param notes: (list) notes for agent to follow during tasks
+        @param use_kaggle: (bool) route code execution to Kaggle notebooks for GPU tasks
+        @param kaggle_gpu: (bool) request GPU when using Kaggle execution
+        @param kaggle_datasets: (list) Kaggle dataset refs to attach to notebooks
         """
         self.agentRxiv = agentRxiv
         self.max_prev_papers = 10
@@ -40,6 +43,9 @@ class LaboratoryWorkflow:
         self.research_topic = research_topic
         self.model_backbone = agent_model_backbone
         self.num_papers_lit_review = num_papers_lit_review
+        self.use_kaggle = use_kaggle
+        self.kaggle_gpu = kaggle_gpu
+        self.kaggle_datasets = kaggle_datasets or []
 
         self.print_cost = True
         self.review_override = True # should review be overridden?
@@ -316,7 +322,7 @@ class LaboratoryWorkflow:
         experiment_notes = [_note["note"] for _note in self.ml_engineer.notes if "running experiments" in _note["phases"]]
         experiment_notes = f"Notes for the task objective: {experiment_notes}\n" if len(experiment_notes) > 0 else ""
         # instantiate mle-solver
-        solver = MLESolver(dataset_code=self.ml_engineer.dataset_code, notes=experiment_notes, insights=self.ml_engineer.lit_review_sum, max_steps=self.mlesolver_max_steps, plan=self.ml_engineer.plan, openai_api_key=self.openai_api_key, llm_str=self.model_backbone["running experiments"])
+        solver = MLESolver(dataset_code=self.ml_engineer.dataset_code, notes=experiment_notes, insights=self.ml_engineer.lit_review_sum, max_steps=self.mlesolver_max_steps, plan=self.ml_engineer.plan, openai_api_key=self.openai_api_key, llm_str=self.model_backbone["running experiments"], use_kaggle=self.use_kaggle, kaggle_gpu=self.kaggle_gpu, kaggle_datasets=self.kaggle_datasets)
         # run initialization for solver
         solver.initial_solve()
         # run solver for N mle optimization steps
@@ -334,6 +340,14 @@ class LaboratoryWorkflow:
             if retry: return retry
         save_to_file(f"./{self.lab_dir}/src", "run_experiments.py", code)
         save_to_file(f"./{self.lab_dir}/src", "experiment_output.log", exp_results)
+        # Save execution history for debugging
+        if solver.error_history:
+            error_log = "\n".join(f"[Error {i+1}] {e}" for i, e in enumerate(solver.error_history))
+            save_to_file(f"./{self.lab_dir}/src", "error_history.log", error_log)
+        if solver.execution_log:
+            import json as _json
+            exec_log = _json.dumps(solver.execution_log, indent=2, default=str)
+            save_to_file(f"./{self.lab_dir}/src", "execution_history.json", exec_log)
         self.set_agent_attr("results_code", code)
         self.set_agent_attr("exp_results", exp_results)
         # reset agent state
@@ -705,6 +719,12 @@ def parse_yaml(yaml_file_loc):
     else: parser.construct_agentRxiv = False
     if 'agentrxiv-papers' in agentlab_data: parser.agentrxiv_papers = agentlab_data["agentrxiv-papers"]
     else:  parser.agentrxiv_papers = 5
+    if 'use-kaggle' in agentlab_data: parser.use_kaggle = agentlab_data["use-kaggle"]
+    else: parser.use_kaggle = False
+    if 'kaggle-gpu' in agentlab_data: parser.kaggle_gpu = agentlab_data["kaggle-gpu"]
+    else: parser.kaggle_gpu = True
+    if 'kaggle-datasets' in agentlab_data: parser.kaggle_datasets = agentlab_data["kaggle-datasets"]
+    else: parser.kaggle_datasets = []
 
     if 'lab-index' in agentlab_data: parser.lab_index = agentlab_data["lab-index"]
     else: parser.lab_index = 0
@@ -724,6 +744,9 @@ if __name__ == "__main__":
     except_if_fail = args.except_if_fail.lower() == "true" if type(args.except_if_fail) == str else args.except_if_fail
     agentRxiv = args.agentRxiv.lower() == "true" if type(args.agentRxiv) == str else args.agentRxiv
     construct_agentRxiv = args.construct_agentRxiv.lower() == "true" if type(args.construct_agentRxiv) == str else args.construct_agentRxiv
+    use_kaggle = args.use_kaggle.lower() == "true" if type(args.use_kaggle) == str else args.use_kaggle
+    kaggle_gpu = args.kaggle_gpu.lower() == "true" if type(args.kaggle_gpu) == str else args.kaggle_gpu
+    kaggle_datasets = args.kaggle_datasets if hasattr(args, 'kaggle_datasets') else []
     lab_index = int(args.lab_index) if type(args.construct_agentRxiv) == str else args.lab_index
 
     try: num_papers_to_write = int(args.num_papers_to_write.lower()) if type(args.num_papers_to_write) == str else args.num_papers_to_write
@@ -856,7 +879,10 @@ if __name__ == "__main__":
                 except_if_fail=except_if_fail,
                 agentRxiv=False,
                 lab_index=lab_index,
-                lab_dir=f"./{lab_direct}"
+                lab_dir=f"./{lab_direct}",
+                use_kaggle=use_kaggle,
+                kaggle_gpu=kaggle_gpu,
+                kaggle_datasets=kaggle_datasets,
             )
             lab.perform_research()
             time_str += str(time.time() - time_now) + " | "

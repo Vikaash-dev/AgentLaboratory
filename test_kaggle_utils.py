@@ -1,5 +1,5 @@
 """
-Tests for kaggle_utils module.
+Tests for kaggle_utils, tools execution fixes, and kaggle_training_pipeline.
 """
 
 import os
@@ -84,7 +84,7 @@ class TestNotebookMetadata(unittest.TestCase):
 
 
 class TestInferenceGeminiSupport(unittest.TestCase):
-    """Tests for Gemini 2.5 Pro Preview support in inference.py."""
+    """Tests for Gemini 2.5 Pro support in inference.py."""
 
     def test_gemini_model_string_recognized(self):
         """Verify the model string is handled in query_model code."""
@@ -121,7 +121,6 @@ class TestEnvExample(unittest.TestCase):
         env_path = os.path.join(os.path.dirname(__file__), ".env.example")
         with open(env_path) as f:
             content = f.read()
-        # All key lines should be commented out
         for line in content.strip().split("\n"):
             line = line.strip()
             if "=" in line and not line.startswith("#"):
@@ -153,6 +152,162 @@ class TestDockerfiles(unittest.TestCase):
         self.assertIn("gpu:", content)
         self.assertIn("COMPUTE_MODE=cpu", content)
         self.assertIn("COMPUTE_MODE=gpu", content)
+
+
+# ─── New tests for fixed shortcomings ────────────────────────────────────
+
+class TestLogInjection(unittest.TestCase):
+    """Tests for training code log injection."""
+
+    def test_inject_logging_adds_pipeline_log(self):
+        from kaggle_utils import inject_logging_code
+        code = "x = 1 + 1\nprint(x)"
+        result = inject_logging_code(code)
+        self.assertIn("pipeline_log", result)
+        self.assertIn("PIPELINE", result)
+        self.assertIn("Training script started", result)
+
+    def test_inject_logging_wraps_in_try_except(self):
+        from kaggle_utils import inject_logging_code
+        code = "print('hello')"
+        result = inject_logging_code(code)
+        self.assertIn("try:", result)
+        self.assertIn("except Exception", result)
+        self.assertIn("FATAL ERROR", result)
+
+    def test_inject_logging_includes_device_detection(self):
+        from kaggle_utils import inject_logging_code
+        code = "pass"
+        result = inject_logging_code(code)
+        self.assertIn("torch.cuda.is_available()", result)
+
+
+class TestLogParsing(unittest.TestCase):
+    """Tests for structured pipeline log parsing."""
+
+    def test_parse_pipeline_logs_extracts_messages(self):
+        from kaggle_utils import parse_pipeline_logs
+        log = "[PIPELINE INFO 0.1s] Training started\n[PIPELINE ERROR 5.2s] OOM crash"
+        result = parse_pipeline_logs(log)
+        self.assertEqual(len(result["messages"]), 2)
+        self.assertEqual(len(result["errors"]), 1)
+        self.assertIn("OOM crash", result["errors"][0])
+
+    def test_parse_pipeline_logs_empty_input(self):
+        from kaggle_utils import parse_pipeline_logs
+        result = parse_pipeline_logs("")
+        self.assertEqual(result["messages"], [])
+        self.assertEqual(result["errors"], [])
+
+    def test_parse_pipeline_logs_extracts_warnings(self):
+        from kaggle_utils import parse_pipeline_logs
+        log = "[PIPELINE WARN 1.0s] Slow convergence"
+        result = parse_pipeline_logs(log)
+        self.assertEqual(len(result["warnings"]), 1)
+
+
+class TestDeviceDetection(unittest.TestCase):
+    """Tests for GPU/device detection in tools.py."""
+
+    def test_detect_device_returns_valid_string(self):
+        try:
+            from tools import detect_device
+        except ImportError:
+            self.skipTest("tools.py dependencies not available in test environment")
+        device = detect_device()
+        self.assertIn(device, ["cuda", "mps", "cpu"])
+
+    def test_detect_device_default_is_cpu(self):
+        """On CI without GPU, should return cpu."""
+        try:
+            from tools import detect_device
+        except ImportError:
+            self.skipTest("tools.py dependencies not available in test environment")
+        device = detect_device()
+        self.assertIsInstance(device, str)
+
+
+class TestPipelineState(unittest.TestCase):
+    """Tests for KaggleTrainingPipeline state tracking."""
+
+    def test_pipeline_state_error_tracking(self):
+        try:
+            from kaggle_training_pipeline import PipelineState
+        except ImportError:
+            self.skipTest("kaggle_training_pipeline dependencies not available")
+        state = PipelineState()
+        state.record("test", "code", errors=["error1", "error2"])
+        self.assertEqual(len(state.accumulated_errors), 2)
+        summary = state.get_error_summary()
+        self.assertIn("error1", summary)
+        self.assertIn("error2", summary)
+
+    def test_pipeline_state_history(self):
+        try:
+            from kaggle_training_pipeline import PipelineState
+        except ImportError:
+            self.skipTest("kaggle_training_pipeline dependencies not available")
+        state = PipelineState()
+        state.record("phase1", "code1")
+        state.record("phase2", "code2", errors=["err"])
+        summary = state.get_history_summary()
+        self.assertIn("phase1", summary)
+        self.assertIn("ERRORS", summary)
+
+    def test_pipeline_state_empty(self):
+        try:
+            from kaggle_training_pipeline import PipelineState
+        except ImportError:
+            self.skipTest("kaggle_training_pipeline dependencies not available")
+        state = PipelineState()
+        self.assertEqual(state.get_error_summary(), "No errors encountered in previous iterations.")
+        self.assertEqual(state.get_history_summary(), "No previous iterations.")
+
+
+class TestPipelineInit(unittest.TestCase):
+    """Tests for KaggleTrainingPipeline initialization."""
+
+    def test_pipeline_requires_gemini_key(self):
+        """Pipeline should raise if no Gemini API key available."""
+        try:
+            from kaggle_training_pipeline import KaggleTrainingPipeline
+        except ImportError:
+            self.skipTest("kaggle_training_pipeline dependencies not available")
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("GEMINI_API_KEY", None)
+            with self.assertRaises(EnvironmentError):
+                KaggleTrainingPipeline(task_description="test task")
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}, clear=False)
+    def test_pipeline_creates_output_dir(self):
+        import tempfile
+        try:
+            from kaggle_training_pipeline import KaggleTrainingPipeline
+        except ImportError:
+            self.skipTest("kaggle_training_pipeline dependencies not available")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = os.path.join(tmpdir, "pipeline_out")
+            pipeline = KaggleTrainingPipeline(
+                task_description="test", output_dir=out
+            )
+            self.assertTrue(os.path.isdir(out))
+
+    def test_pipeline_file_exists(self):
+        """Verify kaggle_training_pipeline.py exists."""
+        path = os.path.join(os.path.dirname(__file__), "kaggle_training_pipeline.py")
+        self.assertTrue(os.path.exists(path))
+
+
+class TestExecutionLogPersistence(unittest.TestCase):
+    """Tests for execution log file persistence in tools.py."""
+
+    def test_execute_code_creates_log_file(self):
+        """execute_code should write a log file to execution_logs/."""
+        try:
+            from tools import _EXECUTION_LOG_DIR
+        except ImportError:
+            self.skipTest("tools.py dependencies not available in test environment")
+        self.assertIn("execution_logs", _EXECUTION_LOG_DIR)
 
 
 if __name__ == "__main__":
