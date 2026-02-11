@@ -12,6 +12,8 @@ Requires KAGGLE_API_TOKEN environment variable to be set.
 import os
 import json
 import subprocess
+import tempfile
+import shutil
 
 
 def get_kaggle_api():
@@ -196,9 +198,6 @@ def submit_training_notebook(title, code_file, enable_gpu=True, dataset_sources=
     @param output_path: (str) path for output directory
     @return: (str) kernel reference for tracking
     """
-    import tempfile
-    import shutil
-
     folder = tempfile.mkdtemp()
     try:
         metadata = create_notebook_metadata(
