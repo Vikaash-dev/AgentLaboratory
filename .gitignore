@@ -14,3 +14,9 @@ state_saves/*
 __pycache__/*
 Figure*.png
 testrun.py
+.env
+kaggle_output/
+kaggle_pipeline_output/
+data/
+output/
+execution_logs/

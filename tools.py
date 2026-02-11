@@ -289,9 +289,28 @@ class ArxivSearch:
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+def detect_device():
+    """
+    Detect the best available compute device.
+    @return: (str) 'cuda', 'mps', or 'cpu'
+    """
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda"
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return "mps"
+    except ImportError:
+        pass
+    return "cpu"
+
+
 def worker_run_code(code_str, output_queue):
     output_capture = io.StringIO()
+    error_capture = io.StringIO()
     sys.stdout = output_capture
+    sys.stderr = error_capture
+    start_time = time.time()
     try:
         # Create a globals dictionary with __name__ set to "__main__"
         globals_dict = {"__name__": "__main__"}
@@ -301,10 +320,30 @@ def worker_run_code(code_str, output_queue):
         traceback.print_exc(file=output_capture)
     finally:
         sys.stdout = sys.__stdout__
-    output_queue.put(output_capture.getvalue())
+        sys.stderr = sys.__stderr__
+    elapsed = time.time() - start_time
+    stderr_content = error_capture.getvalue()
+    stdout_content = output_capture.getvalue()
+    if stderr_content:
+        stdout_content += f"\n[STDERR]:\n{stderr_content}"
+    stdout_content += f"\n[EXECUTION TIME]: {elapsed:.1f}s"
+    stdout_content += f"\n[DEVICE]: {detect_device()}"
+    output_queue.put(stdout_content)
 
-def execute_code(code_str, timeout=600, MAX_LEN=1000):
-    #code_str = code_str.replace("\\n", "\n")
+
+_EXECUTION_LOG_DIR = os.path.join(os.path.dirname(__file__), "execution_logs")
+
+
+def execute_code(code_str, timeout=600, MAX_LEN=1000, log_to_file=True):
+    """
+    Execute code in an isolated process with logging and device awareness.
+
+    @param code_str: (str) code to execute
+    @param timeout: (int) max seconds before killing the process
+    @param MAX_LEN: (int) max output length to return
+    @param log_to_file: (bool) whether to persist logs to execution_logs/
+    @return: (str) execution output including any errors
+    """
     code_str = "from utils import *\n" + code_str
     if "load_dataset('pubmed" in code_str:
         return "[CODE EXECUTION ERROR] pubmed Download took way too long. Program terminated"
@@ -317,9 +356,108 @@ def execute_code(code_str, timeout=600, MAX_LEN=1000):
     if proc.is_alive():
         proc.terminate()  # Forcefully kill the process
         proc.join()
-        return (f"[CODE EXECUTION ERROR]: Code execution exceeded the timeout limit of {timeout} seconds. "
-                "You must reduce the time complexity of your code.")
+        output = (f"[CODE EXECUTION ERROR]: Code execution exceeded the timeout limit of {timeout} seconds. "
+                  "You must reduce the time complexity of your code.")
     else:
         if not output_queue.empty(): output = output_queue.get()
         else: output = ""
-        return output
+
+    # Persist execution log to disk for debugging
+    if log_to_file:
+        try:
+            os.makedirs(_EXECUTION_LOG_DIR, exist_ok=True)
+            log_name = f"exec_{int(time.time())}.log"
+            log_path = os.path.join(_EXECUTION_LOG_DIR, log_name)
+            with open(log_path, "w") as f:
+                f.write(f"=== CODE ===\n{code_str}\n\n=== OUTPUT ===\n{output}\n")
+        except Exception:
+            pass  # logging should never break execution
+
+    return output
+
+
+def execute_code_kaggle(code_str, title=None, enable_gpu=True, timeout=900,
+                        dataset_sources=None, competition_sources=None):
+    """
+    Execute code on Kaggle as a notebook, with real-time log monitoring.
+    Use this for GPU-heavy tasks (model training, large dataset processing).
+    Falls back to local execute_code() if Kaggle is not configured.
+
+    @param code_str: (str) Python code to execute
+    @param title: (str, optional) notebook title; auto-generated if None
+    @param enable_gpu: (bool) whether to request GPU on Kaggle
+    @param timeout: (int) max seconds to wait for completion
+    @param dataset_sources: (list, optional) Kaggle dataset refs to attach
+    @param competition_sources: (list, optional) Kaggle competition refs
+    @return: (str) execution output (stdout/logs from the notebook)
+    """
+    try:
+        from kaggle_utils import (
+            submit_training_notebook,
+            poll_notebook_status,
+            retrieve_notebook_logs,
+            inject_logging_code,
+            parse_pipeline_logs,
+        )
+    except ImportError:
+        print("[KAGGLE] kaggle_utils not available, falling back to local execution")
+        return execute_code(code_str, timeout=timeout)
+
+    if not os.getenv("KAGGLE_API_TOKEN"):
+        print("[KAGGLE] KAGGLE_API_TOKEN not set, falling back to local execution")
+        return execute_code(code_str, timeout=timeout)
+
+    import tempfile
+
+    # Inject structured logging into the code
+    instrumented_code = inject_logging_code(code_str)
+
+    # Save code to a temp file
+    tmpdir = tempfile.mkdtemp(prefix="kaggle_exec_")
+    if title is None:
+        title = f"agentlab-run-{int(time.time())}"
+    code_path = os.path.join(tmpdir, "script.py")
+    with open(code_path, "w") as f:
+        f.write(instrumented_code)
+
+    try:
+        print(f"[KAGGLE] Submitting {'GPU' if enable_gpu else 'CPU'} notebook: {title}")
+        kernel_ref = submit_training_notebook(
+            title=title,
+            code_file=code_path,
+            enable_gpu=enable_gpu,
+            dataset_sources=dataset_sources,
+            competition_sources=competition_sources,
+        )
+        print(f"[KAGGLE] Submitted: {kernel_ref}")
+
+        # Poll for completion with real-time status logging
+        result = poll_notebook_status(
+            kernel_ref, poll_interval=20, timeout=timeout
+        )
+        print(f"[KAGGLE] Finished: {result['status']} ({result['elapsed']}s)")
+
+        # Retrieve output logs
+        log_dir = os.path.join(tmpdir, "output")
+        logs = retrieve_notebook_logs(kernel_ref, output_dir=log_dir)
+        log_content = logs.get("log_content", "")
+
+        if result["status"] == "error":
+            # Parse errors from logs for the agent to learn from
+            parsed = parse_pipeline_logs(log_content)
+            error_msgs = parsed.get("errors", [])
+            error_detail = "\n".join(error_msgs) if error_msgs else result.get("failure_message", "Unknown error")
+            return f"[CODE EXECUTION ERROR]: Kaggle execution failed.\n{error_detail}\n\nFull logs:\n{log_content[:2000]}"
+
+        if result["status"] == "timeout":
+            return f"[CODE EXECUTION ERROR]: Kaggle execution timed out after {timeout}s.\n\nPartial logs:\n{log_content[:2000]}"
+
+        # Success — return the log output just like local execute_code would
+        return log_content if log_content else "(No output captured from Kaggle notebook)"
+
+    except Exception as e:
+        print(f"[KAGGLE] Submission failed: {e}, falling back to local execution")
+        return execute_code(code_str, timeout=timeout)
+    finally:
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)

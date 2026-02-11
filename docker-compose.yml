@@ -1,0 +1,42 @@
+# =============================================================================
+# AgentLaboratory Docker Compose
+# =============================================================================
+# Usage:
+#   CPU-only local testing:  docker compose up cpu
+#   GPU-accelerated training: docker compose up gpu
+# =============================================================================
+services:
+  cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: gcr.io/kaggle-images/python:latest
+    env_file:
+      - .env
+    environment:
+      - COMPUTE_MODE=cpu
+    volumes:
+      - ./research_dir:/app/research_dir
+      - ./experiment_configs:/app/experiment_configs
+
+  gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: gcr.io/kaggle-gpu-images/python:latest
+    env_file:
+      - .env
+    environment:
+      - COMPUTE_MODE=gpu
+    volumes:
+      - ./research_dir:/app/research_dir
+      - ./experiment_configs:/app/experiment_configs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
