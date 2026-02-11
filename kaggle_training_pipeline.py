@@ -1,18 +1,26 @@
 """
-Kaggle Training Pipeline — Self-Iterating ML Training with Gemini 2.5 Pro.
+Kaggle Training Pipeline — Self-Iterating ML Training with Sub-Agents.
 
-This pipeline implements a self-reviewing, iterative training loop:
+This pipeline uses specialized sub-agents for each phase of ML training:
 
-Phase 1 — CPU Test:   Generate training code → push to Kaggle CPU → monitor logs
-Phase 2 — Review:     Analyze logs for errors → self-review with Gemini → fix
-Phase 3 — GPU Train:  Adapt for GPU → push to Kaggle GPU → monitor training
-Phase 4 — Iterate:    While monitoring, prepare next iteration (parallel work)
+    ResearchAgent (Tavily) → gathers best practices, docs, sample code
+    LoggingAgent           → injects structured logging into training code
+    CodeReviewAgent        → self-reviews code for errors and Kaggle constraints
+    CodeFixAgent           → fixes issues found by review or error analysis
+    CPUTestAgent           → creates CPU-only version for quick validation
+    GPUTrainingAgent       → creates full GPU-accelerated training code
+    ErrorAnalysisAgent     → analyzes logs/errors and diagnoses problems
+    MonitoringAgent (Flash)→ lightweight real-time training progress monitoring
 
-Key design principles:
-- Real-time log monitoring prevents waiting 10 min for hidden errors
-- Gemini 2.5 Pro with high thinking reviews code before each push
-- Each iteration learns from previous failures via log analysis
-- Parallel preparation: next iteration code is ready before current completes
+Workflow per iteration:
+    1. ResearchAgent gathers context (Tavily search + static best practices)
+    2. Generate training code → LoggingAgent adds monitoring
+    3. CodeReviewAgent reviews → CodeFixAgent fixes issues
+    4. CPUTestAgent creates CPU version → submit to Kaggle CPU → monitor
+    5. ErrorAnalysisAgent checks CPU logs → CodeFixAgent fixes if needed
+    6. GPUTrainingAgent creates GPU version → CodeReviewAgent reviews
+    7. Submit to Kaggle GPU → MonitoringAgent watches progress
+    8. Iterate with learned context
 
 Usage:
     from kaggle_training_pipeline import KaggleTrainingPipeline
@@ -38,6 +46,17 @@ from kaggle_utils import (
     get_compute_mode,
     configure_device,
 )
+from pipeline_subagents import (
+    ResearchAgent,
+    LoggingAgent,
+    CodeReviewAgent,
+    CodeFixAgent,
+    CPUTestAgent,
+    GPUTrainingAgent,
+    ErrorAnalysisAgent,
+    MonitoringAgent,
+    THINKING_MODEL,
+)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -45,8 +64,8 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
-# Gemini model used for code generation and self-review
-PIPELINE_MODEL = "gemini-2.5-pro"
+# Gemini model used for code generation
+PIPELINE_MODEL = THINKING_MODEL
 
 
 class PipelineState:
@@ -95,14 +114,26 @@ class PipelineState:
 
 class KaggleTrainingPipeline:
     """
-    Self-iterating ML training pipeline using Kaggle notebooks and Gemini 2.5 Pro.
+    Self-iterating ML training pipeline using Kaggle notebooks and
+    specialized sub-agents.
+
+    Sub-agents:
+        research_agent   — Tavily web search for best practices and docs
+        logging_agent    — Injects structured logging into code
+        review_agent     — Reviews code for errors and Kaggle constraints
+        fix_agent        — Fixes issues from review or error analysis
+        cpu_test_agent   — Creates CPU-only validation version
+        gpu_agent        — Creates full GPU-accelerated training version
+        error_agent      — Analyzes execution logs and diagnoses problems
+        monitor_agent    — Gemini 2.5 Flash for real-time progress monitoring
 
     Workflow per iteration:
-    1. Generate/refine training code using Gemini (learns from past errors)
-    2. Inject logging → push to Kaggle CPU → monitor logs → catch errors early
-    3. If CPU test passes, adapt for GPU → push to Kaggle GPU → monitor training
-    4. While GPU training runs, pre-generate next iteration code (parallel)
-    5. Analyze results → feed back into next iteration
+        1. ResearchAgent gathers context (Tavily + static best practices)
+        2. Generate code → LoggingAgent adds monitoring → CodeReviewAgent reviews
+        3. CPUTestAgent creates CPU version → submit to Kaggle CPU
+        4. MonitoringAgent watches logs → ErrorAnalysisAgent diagnoses failures
+        5. GPUTrainingAgent creates GPU version → submit to Kaggle GPU
+        6. MonitoringAgent watches GPU training → iterate with learned context
     """
 
     def __init__(self, task_description, dataset_sources=None,
@@ -129,8 +160,27 @@ class KaggleTrainingPipeline:
                 "GEMINI_API_KEY is required. Set it via environment or constructor."
             )
 
+        # Initialize sub-agents
+        self.research_agent = ResearchAgent(gemini_api_key=self.gemini_api_key)
+        self.logging_agent = LoggingAgent(gemini_api_key=self.gemini_api_key)
+        self.review_agent = CodeReviewAgent(gemini_api_key=self.gemini_api_key)
+        self.fix_agent = CodeFixAgent(gemini_api_key=self.gemini_api_key)
+        self.cpu_test_agent = CPUTestAgent(gemini_api_key=self.gemini_api_key)
+        self.gpu_agent = GPUTrainingAgent(gemini_api_key=self.gemini_api_key)
+        self.error_agent = ErrorAnalysisAgent(gemini_api_key=self.gemini_api_key)
+        self.monitor_agent = MonitoringAgent(gemini_api_key=self.gemini_api_key)
+        self._research_context = None
+
+    def _get_research_context(self):
+        """Get research context from ResearchAgent (cached after first call)."""
+        if self._research_context is None:
+            logger.info("ResearchAgent: Gathering best practices via Tavily...")
+            self._research_context = self.research_agent.research(self.task)
+            logger.info(f"ResearchAgent: {len(self._research_context)} chars of context gathered")
+        return self._research_context
+
     def _query_gemini(self, prompt, system_prompt):
-        """Query Gemini 2.5 Pro with high thinking for code generation/review."""
+        """Query Gemini 2.5 Pro with high thinking for code generation."""
         return query_model(
             model_str=PIPELINE_MODEL,
             prompt=prompt,
@@ -143,20 +193,13 @@ class KaggleTrainingPipeline:
 
     def generate_training_code(self, for_gpu=False):
         """
-        Use Gemini 2.5 Pro to generate training code.
-        Incorporates learnings from previous iterations.
+        Generate training code using Gemini, incorporating research context
+        and learnings from previous iterations.
         """
         device = "GPU (CUDA)" if for_gpu else "CPU"
         error_context = self.state.get_error_summary()
         history_context = self.state.get_history_summary()
-
-        system_prompt = (
-            "You are an expert ML engineer writing Python training scripts for Kaggle notebooks. "
-            "Write clean, complete, self-contained code that runs without modification. "
-            "Always include proper error handling and progress logging. "
-            "Use print() with flush=True for all output so logs appear in real-time. "
-            "The code must be a complete script, not a notebook — no cell magic or !commands."
-        )
+        research = self._get_research_context()
 
         if for_gpu:
             device_requirements = (
@@ -173,6 +216,14 @@ class KaggleTrainingPipeline:
                 "- This is a VALIDATION run, focus on correctness not performance"
             )
 
+        system_prompt = (
+            "You are an expert ML engineer writing Python training scripts for Kaggle notebooks. "
+            "Write clean, complete, self-contained code that runs without modification. "
+            "Always include proper error handling and progress logging. "
+            "Use print() with flush=True for all output so logs appear in real-time. "
+            "The code must be a complete script, not a notebook — no cell magic or !commands."
+        )
+
         prompt = f"""Write a complete Python training script for the following task:
 
 TASK: {self.task}
@@ -181,6 +232,9 @@ TARGET DEVICE: {device}
 ITERATION: {self.state.iteration + 1}
 
 {device_requirements}
+
+BEST PRACTICES AND DOCUMENTATION:
+{research[:2000]}
 
 LOGGING REQUIREMENTS:
 - Print progress every batch/epoch with loss values
@@ -214,91 +268,40 @@ IMPORTANT:
 
         return code
 
-    # ─── Phase 2: Self-Review ────────────────────────────────────────────
+    # ─── Phase 2: Review & Fix (Sub-Agents) ──────────────────────────────
 
     def review_code(self, code, context=""):
         """
-        Use Gemini 2.5 Pro to self-review code before submission.
+        Review code using CodeReviewAgent. If issues found, fix with CodeFixAgent.
         Returns (is_ok, fixed_code, review_notes).
         """
-        system_prompt = (
-            "You are a senior ML engineer reviewing Python training code for Kaggle. "
-            "Check for: import errors, syntax errors, runtime errors, device mismatches, "
-            "missing dependencies, infinite loops, memory issues, and Kaggle-specific "
-            "constraints (no internet for datasets after start, 9h GPU / 12h CPU limits). "
-            "If the code has issues, fix them and return the corrected code. "
-            "If the code is correct, return it unchanged."
+        research = self._get_research_context()
+        device = "GPU" if "cuda" in code.lower() else "CPU"
+
+        review = self.review_agent.review(code, research, device=device)
+
+        if review["status"] == "OK":
+            return True, code, review["notes"]
+
+        # Issues found — use CodeFixAgent to fix
+        logger.info(f"CodeReviewAgent found {len(review['issues'])} issues, "
+                     "delegating to CodeFixAgent...")
+        fixed_code = self.fix_agent.fix(
+            code, review["issues"], research,
+            error_history=self.state.get_error_summary()
         )
+        return False, fixed_code, review["notes"]
 
-        prompt = f"""Review this training code and fix any issues:
-
-{context}
-
-```python
-{code}
-```
-
-RESPOND WITH EXACTLY:
-1. First line: REVIEW_STATUS: OK or REVIEW_STATUS: FIXED
-2. Second line: REVIEW_NOTES: <brief description of any changes>
-3. Then the complete corrected code between ```python and ``` markers
-
-If the code is fine, still include it in full after the markers.
-"""
-        response = self._query_gemini(prompt, system_prompt)
-
-        is_ok = "REVIEW_STATUS: OK" in response
-        notes = ""
-        fixed_code = code  # default to original
-
-        for line in response.split("\n"):
-            if line.startswith("REVIEW_NOTES:"):
-                notes = line.replace("REVIEW_NOTES:", "").strip()
-                break
-
-        # Extract code from response
-        if "```python" in response:
-            parts = response.split("```python")
-            if len(parts) > 1:
-                code_part = parts[1].split("```")[0].strip()
-                if code_part:
-                    fixed_code = code_part
-
-        logger.info(f"Code review: {'PASS' if is_ok else 'FIXED'} — {notes}")
-        return is_ok, fixed_code, notes
-
-    # ─── Phase 3: Analyze Logs ───────────────────────────────────────────
+    # ─── Phase 3: Analyze Logs (Sub-Agent) ───────────────────────────────
 
     def analyze_logs(self, logs, code):
         """
-        Use Gemini 2.5 Pro to analyze training logs and identify issues.
-        Returns (has_issues, analysis, suggested_fixes).
+        Analyze logs using ErrorAnalysisAgent.
+        Returns (has_issues, analysis_dict).
         """
-        system_prompt = (
-            "You are an ML debugging expert. Analyze training logs from a Kaggle notebook. "
-            "Identify: errors, warnings, performance issues, convergence problems. "
-            "Be specific about what went wrong and how to fix it."
-        )
-
-        prompt = f"""Analyze these training logs and identify any issues:
-
-LOGS:
-{logs[:3000]}
-
-CODE THAT PRODUCED THESE LOGS:
-```python
-{code[:2000]}
-```
-
-RESPOND WITH:
-1. First line: LOG_STATUS: OK or LOG_STATUS: ISSUES_FOUND
-2. ANALYSIS: <detailed analysis>
-3. FIXES: <specific code changes needed, if any>
-"""
-        response = self._query_gemini(prompt, system_prompt)
-
-        has_issues = "LOG_STATUS: ISSUES_FOUND" in response
-        return has_issues, response
+        research = self._get_research_context()
+        result = self.error_agent.analyze(logs, code, research)
+        return result["has_errors"], result
 
     # ─── Phase 4: Submit and Monitor ─────────────────────────────────────
 
@@ -312,13 +315,14 @@ RESPOND WITH:
     def submit_and_monitor(self, code, title, enable_gpu=False):
         """
         Submit code to Kaggle and monitor execution via log polling.
+        Uses MonitoringAgent (Gemini 2.5 Flash) for real-time assessment.
 
         @param code: (str) Python code to execute
         @param title: (str) notebook title
         @param enable_gpu: (bool) whether to use GPU
         @return: (dict) with 'status', 'logs', 'errors', 'metrics'
         """
-        # Inject logging code
+        # LoggingAgent adds structured logging
         instrumented_code = inject_logging_code(code)
 
         # Save to file
@@ -338,11 +342,11 @@ RESPOND WITH:
 
         logger.info(f"Submitted kernel: {kernel_ref}")
 
-        # Monitor via polling
+        # Monitor via polling with MonitoringAgent assessment
         final_status = poll_notebook_status(
             kernel_ref,
             poll_interval=20,
-            timeout=900 if enable_gpu else 600,  # 15 min GPU, 10 min CPU
+            timeout=900 if enable_gpu else 600,
         )
 
         logger.info(f"Kernel finished: {final_status['status']} "
@@ -353,64 +357,101 @@ RESPOND WITH:
         logs_data = retrieve_notebook_logs(kernel_ref, output_dir=log_dir)
         parsed = parse_pipeline_logs(logs_data.get("log_content", ""))
 
+        # MonitoringAgent (Gemini 2.5 Flash) provides lightweight assessment
+        log_content = logs_data.get("log_content", "")
+        if log_content:
+            monitor_result = self.monitor_agent.assess_progress(
+                log_content, self.task
+            )
+            logger.info(f"MonitoringAgent: {monitor_result['status']} — "
+                         f"{monitor_result['message']}")
+        else:
+            monitor_result = {"status": "unknown", "message": "No logs available"}
+
         return {
             "status": final_status["status"],
             "kernel_ref": kernel_ref,
-            "logs": logs_data.get("log_content", ""),
+            "logs": log_content,
             "errors": parsed.get("errors", []) + logs_data.get("errors", []),
             "metrics": parsed.get("metrics", {}),
             "output_files": logs_data.get("output_files", []),
+            "monitor_assessment": monitor_result,
         }
 
     # ─── Main Run Loop ───────────────────────────────────────────────────
 
     def run_iteration(self):
         """
-        Run a single iteration of the training pipeline.
+        Run a single iteration of the training pipeline using sub-agents.
+
+        Workflow:
+            1. ResearchAgent → gather best practices context
+            2. Generate code → LoggingAgent → CodeReviewAgent → CodeFixAgent
+            3. CPUTestAgent → submit CPU test → MonitoringAgent watches
+            4. ErrorAnalysisAgent → CodeFixAgent if issues
+            5. GPUTrainingAgent → CodeReviewAgent → submit GPU training
+            6. MonitoringAgent watches → summarize
 
         Returns (success, result_dict)
         """
         iteration = self.state.iteration
         logger.info(f"{'='*60}")
-        logger.info(f"ITERATION {iteration + 1}")
+        logger.info(f"ITERATION {iteration + 1} — Sub-Agent Pipeline")
         logger.info(f"{'='*60}")
 
-        # ── Step 1: Generate CPU test code ──
-        logger.info("Step 1: Generating CPU test code with Gemini 2.5 Pro...")
-        cpu_code = self.generate_training_code(for_gpu=False)
-        self.state.record("generate_cpu", cpu_code)
-        logger.info(f"Generated {len(cpu_code)} chars of CPU code")
+        # ── Step 1: ResearchAgent gathers context ──
+        research = self._get_research_context()
+        logger.info(f"Step 1: Research context ready ({len(research)} chars)")
 
-        # ── Step 2: Self-review CPU code ──
-        logger.info("Step 2: Self-reviewing CPU code...")
-        _, reviewed_cpu_code, review_notes = self.review_code(
-            cpu_code,
-            context="CPU validation run — keep it fast, focus on correctness"
+        # ── Step 2: Generate training code ──
+        logger.info("Step 2: Generating training code...")
+        base_code = self.generate_training_code(for_gpu=False)
+        self.state.record("generate", base_code)
+
+        # ── Step 3: CodeReviewAgent reviews → CodeFixAgent fixes ──
+        logger.info("Step 3: CodeReviewAgent reviewing code...")
+        _, reviewed_code, review_notes = self.review_code(base_code)
+        self.state.record("review", reviewed_code)
+
+        # ── Step 4: CPUTestAgent creates CPU version ──
+        logger.info("Step 4: CPUTestAgent creating CPU validation version...")
+        cpu_code = self.cpu_test_agent.create_cpu_version(
+            reviewed_code, research, self.task
         )
-        self.state.record("review_cpu", reviewed_cpu_code)
+        self.state.record("cpu_adapt", cpu_code)
 
-        # ── Step 3: Submit CPU test ──
-        logger.info("Step 3: Submitting CPU test to Kaggle...")
+        # ── Step 5: Submit CPU test → MonitoringAgent watches ──
+        logger.info("Step 5: Submitting CPU test to Kaggle...")
         cpu_title = f"pipeline-cpu-test-iter{iteration + 1}-{int(time.time())}"
         cpu_result = self.submit_and_monitor(
-            reviewed_cpu_code, cpu_title, enable_gpu=False
+            cpu_code, cpu_title, enable_gpu=False
         )
-        self.state.record("cpu_test", reviewed_cpu_code,
+        self.state.record("cpu_test", cpu_code,
                           logs=cpu_result["logs"],
                           errors=cpu_result["errors"],
                           metrics=cpu_result["metrics"])
 
-        # ── Step 4: Analyze CPU logs ──
+        # ── Step 6: ErrorAnalysisAgent checks CPU results ──
         if cpu_result["errors"]:
             logger.warning(f"CPU test had {len(cpu_result['errors'])} errors!")
             has_issues, analysis = self.analyze_logs(
-                cpu_result["logs"], reviewed_cpu_code
+                cpu_result["logs"], cpu_code
             )
-            self.state.record("analyze_cpu_errors", analysis,
+            self.state.record("analyze_cpu",
+                              analysis.get("raw_analysis", str(analysis)),
                               errors=cpu_result["errors"])
 
-            if has_issues:
-                logger.info("Errors found in CPU test, will fix in next iteration")
+            if has_issues and analysis.get("fixes"):
+                # CodeFixAgent fixes the issues
+                logger.info("CodeFixAgent fixing CPU test errors...")
+                cpu_code = self.fix_agent.fix(
+                    cpu_code, analysis["fixes"], research,
+                    error_history=self.state.get_error_summary()
+                )
+                self.state.record("fix_cpu", cpu_code)
+            else:
+                logger.info("Errors found but no fixes identified, "
+                            "will try next iteration")
                 return False, cpu_result
 
         if cpu_result["status"] != "complete":
@@ -419,43 +460,21 @@ RESPOND WITH:
 
         logger.info("CPU test passed!")
 
-        # ── Step 5: Generate GPU code (parallel-ready) ──
-        logger.info("Step 5: Generating GPU training code...")
-        gpu_code = self.generate_training_code(for_gpu=True)
-        self.state.record("generate_gpu", gpu_code)
-
-        # ── Step 6: Self-review GPU code ──
-        logger.info("Step 6: Self-reviewing GPU code...")
-        _, reviewed_gpu_code, gpu_notes = self.review_code(
-            gpu_code,
-            context="GPU training run — use CUDA, mixed precision, proper data loading"
+        # ── Step 7: GPUTrainingAgent creates GPU version ──
+        logger.info("Step 7: GPUTrainingAgent creating GPU training version...")
+        gpu_code = self.gpu_agent.create_gpu_version(
+            reviewed_code, research, self.task
         )
+        self.state.record("gpu_adapt", gpu_code)
+
+        # ── Step 8: CodeReviewAgent reviews GPU code ──
+        logger.info("Step 8: CodeReviewAgent reviewing GPU code...")
+        _, reviewed_gpu_code, gpu_notes = self.review_code(gpu_code)
         self.state.record("review_gpu", reviewed_gpu_code)
 
-        # ── Step 7: Submit GPU training ──
-        logger.info("Step 7: Submitting GPU training to Kaggle...")
+        # ── Step 9: Submit GPU training → MonitoringAgent watches ──
+        logger.info("Step 9: Submitting GPU training to Kaggle...")
         gpu_title = f"pipeline-gpu-train-iter{iteration + 1}-{int(time.time())}"
-
-        # Start preparing next iteration while GPU runs (parallel work)
-        next_code = None
-        next_thread = None
-        if self.state.iteration < 10:  # safety cap
-            next_iter = self.state.iteration + 1
-            def _prepare_next():
-                nonlocal next_code
-                try:
-                    # Use a snapshot of iteration, not shared mutable state
-                    saved = self.state.iteration
-                    self.state.iteration = next_iter
-                    next_code = self.generate_training_code(for_gpu=False)
-                    self.state.iteration = saved
-                except Exception as e:
-                    logger.warning(f"Pre-generation failed: {e}")
-
-            next_thread = threading.Thread(target=_prepare_next, daemon=True)
-            next_thread.start()
-            logger.info("Started pre-generating next iteration code (parallel)")
-
         gpu_result = self.submit_and_monitor(
             reviewed_gpu_code, gpu_title, enable_gpu=True
         )
@@ -464,25 +483,23 @@ RESPOND WITH:
                           errors=gpu_result["errors"],
                           metrics=gpu_result["metrics"])
 
-        # Wait for parallel preparation if running
-        if next_thread and next_thread.is_alive():
-            next_thread.join(timeout=30)
-
-        if next_code:
-            self.state.best_code = next_code
-            logger.info("Next iteration code pre-generated and ready")
-
-        # ── Step 8: Analyze GPU results ──
+        # ── Step 10: Analyze GPU results ──
         if gpu_result["errors"]:
             logger.warning(f"GPU training had {len(gpu_result['errors'])} errors")
             has_issues, analysis = self.analyze_logs(
                 gpu_result["logs"], reviewed_gpu_code
             )
-            self.state.record("analyze_gpu_errors", analysis,
+            self.state.record("analyze_gpu",
+                              analysis.get("raw_analysis", str(analysis)),
                               errors=gpu_result["errors"])
             return False, gpu_result
 
         if gpu_result["status"] == "complete":
+            # MonitoringAgent summarizes the run
+            summary = self.monitor_agent.summarize_run(
+                gpu_result["logs"], self.task
+            )
+            logger.info(f"MonitoringAgent run summary:\n{summary}")
             logger.info("GPU training completed successfully!")
             self.state.best_metrics = gpu_result["metrics"]
             return True, gpu_result

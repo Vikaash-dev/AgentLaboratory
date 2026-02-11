@@ -84,7 +84,7 @@ class TestNotebookMetadata(unittest.TestCase):
 
 
 class TestInferenceGeminiSupport(unittest.TestCase):
-    """Tests for Gemini 2.5 Pro support in inference.py."""
+    """Tests for Gemini 2.5 Pro and Flash support in inference.py."""
 
     def test_gemini_model_string_recognized(self):
         """Verify the model string is handled in query_model code."""
@@ -92,6 +92,12 @@ class TestInferenceGeminiSupport(unittest.TestCase):
             source = f.read()
         self.assertIn("gemini-2.5-pro", source)
         self.assertIn("thinking_budget", source)
+
+    def test_gemini_flash_model_recognized(self):
+        """Verify Gemini 2.5 Flash is supported for monitoring."""
+        with open(os.path.join(os.path.dirname(__file__), "inference.py")) as f:
+            source = f.read()
+        self.assertIn("gemini-2.5-flash", source)
 
     @patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}, clear=False)
     def test_gemini_api_key_loaded_from_env(self):
@@ -308,6 +314,117 @@ class TestExecutionLogPersistence(unittest.TestCase):
         except ImportError:
             self.skipTest("tools.py dependencies not available in test environment")
         self.assertIn("execution_logs", _EXECUTION_LOG_DIR)
+
+
+# ─── Sub-Agent Tests ─────────────────────────────────────────────────────
+
+class TestSubAgentFiles(unittest.TestCase):
+    """Tests for sub-agent module existence and structure."""
+
+    def test_pipeline_subagents_exists(self):
+        path = os.path.join(os.path.dirname(__file__), "pipeline_subagents.py")
+        self.assertTrue(os.path.exists(path))
+
+    def test_kaggle_best_practices_exists(self):
+        path = os.path.join(os.path.dirname(__file__), "kaggle_best_practices.md")
+        self.assertTrue(os.path.exists(path))
+
+    def test_subagents_module_has_all_agents(self):
+        """Verify all sub-agent classes are defined."""
+        with open(os.path.join(os.path.dirname(__file__), "pipeline_subagents.py")) as f:
+            source = f.read()
+        for agent_name in ["ResearchAgent", "LoggingAgent", "CodeReviewAgent",
+                           "CodeFixAgent", "CPUTestAgent", "GPUTrainingAgent",
+                           "ErrorAnalysisAgent", "MonitoringAgent"]:
+            self.assertIn(f"class {agent_name}", source,
+                          f"Missing sub-agent: {agent_name}")
+
+
+class TestResearchAgent(unittest.TestCase):
+    """Tests for the ResearchAgent (Tavily-powered)."""
+
+    def _get_agent(self):
+        try:
+            from pipeline_subagents import ResearchAgent
+            return ResearchAgent
+        except ImportError:
+            self.skipTest("pipeline_subagents dependencies not available")
+
+    def test_research_agent_init(self):
+        AgentClass = self._get_agent()
+        agent = AgentClass(gemini_api_key="test-key")
+        self.assertIsNotNone(agent._cache)
+        self.assertEqual(agent._cache, {})
+
+    def test_research_agent_has_tavily_search(self):
+        AgentClass = self._get_agent()
+        agent = AgentClass()
+        self.assertTrue(hasattr(agent, '_tavily_search'))
+
+    @patch.dict(os.environ, {}, clear=False)
+    def test_tavily_search_without_key_returns_empty(self):
+        os.environ.pop("TAVILY_API_KEY", None)
+        AgentClass = self._get_agent()
+        agent = AgentClass()
+        results = agent._tavily_search("test query")
+        self.assertEqual(results, [])
+
+    def test_static_fallback_loads(self):
+        AgentClass = self._get_agent()
+        agent = AgentClass()
+        fallback = agent._load_static_fallback()
+        self.assertIn("Kaggle", fallback)
+        self.assertIn("logging", fallback.lower())
+
+
+class TestMonitoringAgent(unittest.TestCase):
+    """Tests for MonitoringAgent model configuration."""
+
+    def test_monitoring_uses_flash_model(self):
+        """MonitoringAgent should use Gemini 2.5 Flash for efficiency."""
+        with open(os.path.join(os.path.dirname(__file__), "pipeline_subagents.py")) as f:
+            source = f.read()
+        self.assertIn('MONITORING_MODEL = "gemini-2.5-flash"', source)
+
+    def test_thinking_model_is_pro(self):
+        """Other agents should use Gemini 2.5 Pro for deep analysis."""
+        with open(os.path.join(os.path.dirname(__file__), "pipeline_subagents.py")) as f:
+            source = f.read()
+        self.assertIn('THINKING_MODEL = "gemini-2.5-pro"', source)
+
+
+class TestPipelineSubAgentIntegration(unittest.TestCase):
+    """Tests for KaggleTrainingPipeline sub-agent integration."""
+
+    def test_pipeline_has_all_sub_agents(self):
+        """Pipeline should initialize all sub-agents."""
+        try:
+            from kaggle_training_pipeline import KaggleTrainingPipeline
+        except ImportError:
+            self.skipTest("kaggle_training_pipeline dependencies not available")
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}, clear=False):
+            import tempfile
+            with tempfile.TemporaryDirectory() as tmpdir:
+                pipeline = KaggleTrainingPipeline(
+                    task_description="test", output_dir=tmpdir
+                )
+                self.assertIsNotNone(pipeline.research_agent)
+                self.assertIsNotNone(pipeline.logging_agent)
+                self.assertIsNotNone(pipeline.review_agent)
+                self.assertIsNotNone(pipeline.fix_agent)
+                self.assertIsNotNone(pipeline.cpu_test_agent)
+                self.assertIsNotNone(pipeline.gpu_agent)
+                self.assertIsNotNone(pipeline.error_agent)
+                self.assertIsNotNone(pipeline.monitor_agent)
+
+    def test_pipeline_imports_subagents(self):
+        """Pipeline module should import from pipeline_subagents."""
+        with open(os.path.join(os.path.dirname(__file__),
+                               "kaggle_training_pipeline.py")) as f:
+            source = f.read()
+        self.assertIn("from pipeline_subagents import", source)
+        self.assertIn("ResearchAgent", source)
+        self.assertIn("MonitoringAgent", source)
 
 
 if __name__ == "__main__":
