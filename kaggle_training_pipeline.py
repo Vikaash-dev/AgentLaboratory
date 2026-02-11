@@ -158,6 +158,21 @@ class KaggleTrainingPipeline:
             "The code must be a complete script, not a notebook — no cell magic or !commands."
         )
 
+        if for_gpu:
+            device_requirements = (
+                "GPU REQUIREMENTS:\n"
+                '- Use torch.device("cuda") and move model/data to GPU\n'
+                "- Use mixed precision (torch.cuda.amp) if beneficial\n"
+                "- Use DataLoader with pin_memory=True and num_workers=2"
+            )
+        else:
+            device_requirements = (
+                "CPU REQUIREMENTS:\n"
+                '- Use torch.device("cpu")\n'
+                "- Keep model small and epochs low (1-2) for quick validation\n"
+                "- This is a VALIDATION run, focus on correctness not performance"
+            )
+
         prompt = f"""Write a complete Python training script for the following task:
 
 TASK: {self.task}
@@ -165,16 +180,7 @@ TASK: {self.task}
 TARGET DEVICE: {device}
 ITERATION: {self.state.iteration + 1}
 
-{'GPU REQUIREMENTS:' if for_gpu else 'CPU REQUIREMENTS:'}
-{
-    '- Use torch.device("cuda") and move model/data to GPU'
-    + chr(10) + '- Use mixed precision (torch.cuda.amp) if beneficial'
-    + chr(10) + '- Use DataLoader with pin_memory=True and num_workers=2'
-    if for_gpu else
-    '- Use torch.device("cpu")'
-    + chr(10) + '- Keep model small and epochs low (1-2) for quick validation'
-    + chr(10) + '- This is a VALIDATION run, focus on correctness not performance'
-}
+{device_requirements}
 
 LOGGING REQUIREMENTS:
 - Print progress every batch/epoch with loss values
@@ -434,12 +440,15 @@ RESPOND WITH:
         next_code = None
         next_thread = None
         if self.state.iteration < 10:  # safety cap
+            next_iter = self.state.iteration + 1
             def _prepare_next():
                 nonlocal next_code
                 try:
-                    self.state.iteration += 1
+                    # Use a snapshot of iteration, not shared mutable state
+                    saved = self.state.iteration
+                    self.state.iteration = next_iter
                     next_code = self.generate_training_code(for_gpu=False)
-                    self.state.iteration -= 1
+                    self.state.iteration = saved
                 except Exception as e:
                     logger.warning(f"Pre-generation failed: {e}")
 
