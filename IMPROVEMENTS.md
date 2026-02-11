@@ -1,165 +1,346 @@
-# Cross-Analysis: AgentLaboratory vs AI-Researcher
+# Cross-Analysis: AgentLaboratory vs HKUDS Research Ecosystem
 
-Deep cross-analysis of AgentLaboratory with AI-Researcher
-(https://github.com/HKUDS/AI-Researcher, NeurIPS 2025 Spotlight,
-arXiv:2502.05957) and other related projects. This document identifies
-gaps, architectural advantages, and actionable improvements.
+Deep cross-analysis of AgentLaboratory with the full HKUDS autonomous
+research ecosystem and related projects. This document identifies gaps,
+architectural advantages, and actionable improvements.
 
-## Reference Projects
+## Reference Projects Analyzed
 
-- [HKUDS/AI-Researcher](https://github.com/HKUDS/AI-Researcher) — NeurIPS 2025 Spotlight,
-  full autonomous research system with Docker-based sandboxed execution
-- [SamuelSchmidgall/AgentLaboratory](https://github.com/SamuelSchmidgall/AgentLaboratory) — upstream project
-- [romgenie/AgentLaboratoryReinvented](https://github.com/romgenie/AgentLaboratoryReinvented) — enhanced fork
-- [allenai/SAGE](https://github.com/allenai/SAGE) — Gemini integration with caching
-- [ExtensityAI/symbolicai](https://github.com/ExtensityAI/symbolicai) — Gemini reasoning engine
+### HKUDS Ecosystem (HKU Data Science Lab)
+- [HKUDS/AI-Researcher](https://github.com/HKUDS/AI-Researcher) — NeurIPS 2025 Spotlight
+  (arXiv:2502.05957). Docker-sandboxed code execution, FlowGraph DAG
+  workflow, JudgeAgent quality gates. 7 specialized research agents.
+- [HKUDS/AutoAgent](https://github.com/HKUDS/AutoAgent) — Meta-agent
+  framework. Agents that dynamically CREATE other agents/tools/workflows.
+  Event-driven flow engine with async execution. Agent/Tool/Workflow
+  registry for runtime composition.
+- [HKUDS/Auto-Deep-Research](https://github.com/HKUDS/Auto-Deep-Research)
+  — Automated deep research pipeline with file selection, web search,
+  and multi-agent collaboration. Built on AutoAgent framework.
+- [HKUDS/DeepCode](https://github.com/HKUDS/DeepCode) — AI research
+  engine that transforms papers into working code. 78KB orchestration
+  engine, MCP-based tool servers, Docker sandboxing via nanobot,
+  FastAPI+React UI.
+- [HKUDS/DeepResearch-Eval](https://github.com/HKUDS/DeepResearch-Eval)
+  — Research quality evaluation with fact-checking (`judge_fact.py`) and
+  multi-dimension scoring (`judge_score.py`). Structured evaluation prompts.
 
-## Architecture Comparison: AgentLaboratory vs AI-Researcher
+### Other Reference Projects
+- [FoundationAgents/MetaGPT](https://github.com/FoundationAgents/MetaGPT) — 50k+ stars,
+  Role-Action-Message pattern, shared Environment with pub/sub messaging,
+  Team orchestration with budget control, Experience Pool for learning from
+  past successes/failures, Tree-of-Thought strategy, multi-environment
+  support (software, games, mobile). Software company metaphor with
+  ProductManager → Architect → Engineer → QAEngineer pipeline.
+- [SamuelSchmidgall/AgentLaboratory](https://github.com/SamuelSchmidgall/AgentLaboratory) — upstream
+- [All-Hands-AI/OpenHands](https://github.com/All-Hands-AI/OpenHands) — SWE coding agent
+- [allenai/SAGE](https://github.com/allenai/SAGE) — Gemini with caching
+- [ExtensityAI/symbolicai](https://github.com/ExtensityAI/symbolicai) — Gemini reasoning
+
+## Architecture Comparison
 
 ### Agent Systems
 
-| Feature | AgentLaboratory | AI-Researcher |
-|---------|----------------|---------------|
-| **Agent roles** | PhDStudent, MLEngineer, SWEngineer, Postdoc, Professor, Reviewers | SurveyAgent, IdeaAgent, PlanAgent, MLAgent, PrepareAgent, ExpAnalyser, JudgeAgent |
-| **Code execution** | Local multiprocessing with 600s timeout | Docker-sandboxed execution via TCP/port |
-| **GPU execution** | Local only (now + Kaggle via pipeline) | Docker with GPU passthrough (`"device=0"`) |
-| **Workflow** | Linear phases: lit review → plan → data prep → experiments → results → report | DAG-based FlowGraph with FlowCache for state |
-| **Self-review** | Reviewer agents score final report | JudgeAgent evaluates at each iteration |
-| **Iteration** | Single pass with optional report refinement loop | Continuous iteration with max_iter_times control |
-| **Memory** | Conversation history in list | FlowCache with persistent state management |
-| **LLM backend** | OpenAI, Gemini, DeepSeek, Anthropic | LiteLLM (any provider via OpenRouter) |
+| Feature | AgentLaboratory | AI-Researcher | AutoAgent | DeepCode | MetaGPT |
+|---------|----------------|---------------|-----------|----------|---------|
+| **Agent roles** | PhD, MLE, SWE, Postdoc, Prof, Reviewers | Survey, Idea, Plan, ML, Prepare, ExpAnalyser, Judge | Meta-agents that CREATE agents dynamically | Orchestration engine with plugin agents | ProductManager, Architect, Engineer, QAEngineer, Researcher, etc. |
+| **Code execution** | Local multiprocessing (600s timeout) | Docker sandbox via TCP | Docker sandbox via TCP | Docker + MCP tool servers (nanobot) | Local with structured code review |
+| **GPU** | Local (+ Kaggle) | Docker GPU passthrough | Docker GPU passthrough | Docker GPU + cloud | Not focused on GPU |
+| **Workflow** | Linear phases | FlowGraph DAG + FlowCache | Event-driven flow engine (async) | Agent orchestration engine (78KB) | Environment pub/sub with n_round loop |
+| **Self-review** | ReviewersAgent on final report | JudgeAgent at each iteration | Self-correcting via meta-agents | Multi-stage verification | QAEngineer writes and runs tests |
+| **Agent creation** | Static (hardcoded) | Static (predefined) | **Dynamic** (LLM creates agents) | Plugin-based | Static roles with dynamic actions |
+| **Tool creation** | Static | Static | **Dynamic** (LLM creates tools) | MCP tool servers | Static with extensible actions |
+| **Memory** | List-based history | FlowCache | Registry + persistent memory | Workspace-based | **Hierarchical**: short-term, long-term, brain, RoleZero |
+| **Experience learning** | None | None | None | None | **Experience Pool** with scoring and retrieval |
+| **Communication** | Direct function calls | Direct function calls | Direct function calls | API-based | **Message bus** (pub/sub Environment) |
+| **Budget control** | None | None | None | None | **CostManager** with NoMoneyException |
+| **Strategy** | None | None | None | None | **ToT, Planner, ExperienceRetriever** |
+| **LLM backend** | OpenAI, Gemini, DeepSeek, Anthropic | LiteLLM | LiteLLM | Multi-provider | Multi-provider via config |
+| **Serialization** | Pickle state save | FlowCache | Registry | Workspace | **Pydantic-based** serialize/deserialize |
 
-### Key Advantages of AI-Researcher (that AgentLaboratory lacks)
+### Key Insights from Each Project
 
-1. **Docker-sandboxed execution**: AI-Researcher runs ALL generated code inside
-   Docker containers, preventing system damage and ensuring reproducibility.
-   AgentLaboratory runs code directly on the host.
+#### AI-Researcher: Docker Sandbox + Quality Gates
+- Runs ALL code in Docker containers via TCP server
+- `JudgeAgent` evaluates experiments at each iteration
+- `ExpAnalyser` provides structured result analysis
+- FlowGraph DAG allows non-linear workflow execution
+- FlowCache prevents redundant LLM calls
 
-2. **DAG-based workflow (FlowGraph)**: AI-Researcher uses a directed acyclic
-   graph for workflow execution with `FlowCache` for caching intermediate
-   results. AgentLaboratory uses a rigid linear phase sequence.
+#### AutoAgent: Meta-Agent Pattern (Most Novel)
+- **AgentCreator**: LLM dynamically creates new agent types at runtime
+- **ToolEditor**: LLM creates new tools based on task requirements
+- **WorkflowCreator/Former**: LLM designs multi-agent workflows
+- **EventEngine**: Async event-driven flow with group triggers
+- **Registry**: Runtime agent/tool/workflow registration and discovery
+- This is the most advanced pattern — agents that design themselves
 
-3. **JudgeAgent for continuous evaluation**: AI-Researcher has a dedicated
-   `JudgeAgent` that evaluates experiment results and decides whether to
-   iterate, providing quality gates at each step. AgentLaboratory only
-   evaluates the final report via ReviewersAgent.
+#### DeepCode: Paper-to-Code Pipeline
+- Transforms research papers into working code implementations
+- 78KB `agent_orchestration_engine.py` — massive orchestration system
+- MCP (Model Context Protocol) tool servers via nanobot
+- Docker-based sandboxed execution environment
+- FastAPI backend + React frontend for modern UI
+- Plugin system for extensible agent capabilities
 
-4. **Experiment Analysis Agent**: AI-Researcher's `ExpAnalyser` deeply
-   analyzes experimental results to identify improvements. AgentLaboratory's
-   results interpretation phase is less structured.
+#### Auto-Deep-Research: Deep Research Pipeline
+- File selection agent for relevant document discovery
+- Web search integration for literature
+- Built on the AutoAgent framework (shared codebase)
+- Focused on deep, multi-step research tasks
 
-5. **Dual completion models**: AI-Researcher uses `COMPLETION_MODEL` for
-   complex reasoning and `CHEEP_MODEL` (their naming for a cheap/fast model)
-   for simpler tasks, reducing cost. AgentLaboratory uses a single model per
-   phase.
+#### DeepResearch-Eval: Research Quality Evaluation
+- `judge_fact.py`: Fact-checking with structured prompts
+- `judge_score.py`: Multi-dimension scoring (depth, breadth, accuracy)
+- `Aprompts.py`: 17KB of structured evaluation prompts
+- `Atools.py`: Evaluation tooling
 
-6. **Structured benchmark system**: AI-Researcher includes a benchmark
-   suite for evaluating the system across categories (GNN, VQ, diffusion,
-   recommendation, reasoning).
+#### OpenHands / SWE-bench: Live Coding Agents
+- Agents that can edit files, run commands, browse web
+- Docker sandbox with full development environment
+- Self-planning and re-planning based on execution results
+- Continuous iteration until task is solved
 
-7. **Web GUI (Gradio)**: AI-Researcher provides a web interface for
-   configuration and monitoring. AgentLaboratory has a Streamlit app but
-   it's more limited.
+#### MetaGPT: Structured Multi-Agent Framework (Most Mature)
+- **Role-Action-Message pattern**: Each Role observes Messages,
+  selects an Action, executes it, publishes results as new Messages.
+  This decouples agents from each other — they communicate ONLY via
+  the shared Environment message bus, never by direct function calls.
+- **Environment as shared memory**: The Environment holds the message
+  bus, role registry, and shared context. Agents publish/subscribe to
+  messages by type. This is fundamentally different from AgentLaboratory
+  where agents call each other directly.
+- **Team with budget control**: `Team` wraps the Environment and adds
+  investment/budget tracking. If costs exceed the budget, it raises
+  `NoMoneyException`. This prevents runaway API costs.
+- **Experience Pool (`exp_pool`)**: Records past task attempts with
+  scoring. The `ExperienceRetriever` finds similar past experiences to
+  guide current tasks. This is the most advanced learning-from-experience
+  system among all analyzed projects.
+- **Hierarchical memory**: `Memory` (short-term working memory),
+  `LongTermMemory` (persistent across sessions), `BrainMemory` (with
+  summarization), `RoleZeroMemory` (for the base role). AgentLaboratory
+  only has a flat list.
+- **Strategy module**: Tree of Thought (`tot.py`), Planner, Solver,
+  ThinkingCommand, SearchSpace. These provide structured reasoning
+  strategies beyond simple chain-of-thought prompting.
+- **Structured schema** (`schema.py`, 33KB): Pydantic models for
+  Messages, Documents, CodePlanAndChange, etc. All inter-agent
+  communication uses typed, serializable objects.
+- **Serialization**: Full serialize/deserialize for Teams and Roles
+  via Pydantic, enabling state save/restore across sessions.
+- **QAEngineer role**: Dedicated role that writes and runs tests for
+  generated code. AgentLaboratory has no automated testing of generated
+  code.
 
-### Key Advantages of AgentLaboratory (that AI-Researcher lacks)
+## What AgentLaboratory Already Has (Advantages)
 
-1. **Kaggle integration**: Remote GPU execution via Kaggle notebooks with
-   real-time log monitoring — doesn't require local GPU hardware.
+1. **Kaggle integration**: Remote GPU via Kaggle notebooks with log monitoring
+2. **Sub-agent pipeline**: 8 specialized agents for training pipeline
+3. **Tavily-powered research**: Dynamic web search for best practices
+4. **Gemini 3 Pro + Flash**: Extended thinking (24576 budget) + cheap monitoring
+5. **Multi-LLM without LiteLLM**: Direct provider integration
+6. **CPU/GPU testing pipeline**: CPU-first validation before GPU training
 
-2. **Sub-agent pipeline**: Specialized sub-agents (ResearchAgent, CPUTestAgent,
-   GPUTrainingAgent, MonitoringAgent) for the training pipeline.
+## Improvements Already Implemented in This PR
 
-3. **Tavily-powered research**: Dynamic web search for best practices using
-   Tavily API, not just static reference papers.
+- `.env.example` — environment variable templates for all API keys
+- `Dockerfile` + `docker-compose.yml` — Kaggle Docker image, CPU/GPU profiles
+- `kaggle_utils.py` — dataset listing, notebook submission, log monitoring
+- `kaggle_training_pipeline.py` — self-iterating CPU→GPU pipeline
+- `pipeline_subagents.py` — 8 specialized sub-agents with Tavily research
+- `inference.py` — Gemini 3 Pro/Flash with max thinking budget
+- `tools.py` — `execute_code_kaggle()`, `detect_device()`, execution logging
+- `mlesolver.py` — Kaggle routing, error history tracking
+- `ai_lab_repo.py` — Kaggle config passthrough, error/execution logs
 
-4. **Gemini 3 Pro with max thinking**: Extended thinking mode with
-   `thinking_budget=24576` for deeper reasoning.
+## Actionable Improvements (Prioritized)
 
-5. **Multi-LLM support without LiteLLM**: Direct integration with OpenAI,
-   Gemini, DeepSeek, Anthropic without an intermediary library.
+### Priority 1: Message Bus Architecture (from MetaGPT)
 
-## Improvements Already Implemented
+**Problem**: AgentLaboratory agents communicate via direct function calls
+and pass state through method parameters. This creates tight coupling —
+adding or removing an agent requires modifying the workflow code.
 
-- **Environment variable management**: `.env.example` template for all API keys
-- **Docker support**: Dockerfile using Kaggle's Python Docker image
-- **Kaggle API integration**: `kaggle_utils.py` for remote GPU training
-- **Gemini 3 Pro with max thinking**: `ThinkingConfig(thinking_budget=24576)`
-- **Gemini-only key support**: No longer requires OpenAI or Anthropic
-- **Sub-agent architecture**: 8 specialized pipeline sub-agents
-- **Tavily research agent**: Dynamic best practices gathering
-- **Monitoring agent**: Gemini 3 Flash for real-time training monitoring
+**Why it matters**: MetaGPT's pub/sub Environment lets agents communicate
+via typed Messages without knowing about each other. This enables:
+adding new agents without changing existing code, parallel agent execution,
+and replay/debugging of agent communication.
 
-## Actionable Improvements (Inspired by AI-Researcher)
+**Implementation**: Create a simple `MessageBus` class. Each agent
+publishes Messages and subscribes to message types. The workflow loop
+in `ai_lab_repo.py` drives the bus rather than calling agents directly.
 
-### Priority 1: Sandboxed Code Execution
+### Priority 2: Experience Pool (from MetaGPT)
 
-**Problem**: AgentLaboratory runs generated code directly on the host machine.
-AI-Researcher sandboxes everything in Docker containers via TCP.
+**Problem**: AgentLaboratory doesn't learn from past experiments. Each
+run starts from scratch with no memory of what worked or failed before.
 
-**Implementation**: Use the existing Dockerfile and docker-compose.yml to
-execute `run_experiments.py` inside a container. The `execute_code()` function
-in `tools.py` should optionally route to Docker execution.
+**Why it matters**: MetaGPT's `exp_pool` records past attempts with
+scoring, then retrieves similar experiences to guide new tasks. This
+dramatically improves success rates over iterations.
 
-### Priority 2: JudgeAgent for Iterative Quality Gates
+**Implementation**: Store experiment results (code, output, errors, scores)
+in a JSON-based experience pool. Before generating code, retrieve similar
+past experiences and include them as few-shot examples in the prompt.
 
-**Problem**: AgentLaboratory only evaluates the final report. AI-Researcher's
-`JudgeAgent` evaluates experiments at each iteration and decides whether
-results are good enough to proceed or need another round.
+### Priority 3: Budget/Cost Control (from MetaGPT)
 
-**Implementation**: Add a `JudgeAgent` to the existing agent system that runs
-after each experiment, scoring results and deciding whether to iterate or
-proceed. This prevents wasting compute on poor experiment paths.
+**Problem**: AgentLaboratory has no cost controls. A runaway experiment
+can consume unlimited API tokens.
 
-### Priority 3: Dual Model Strategy (Expensive + Cheap)
+**Why it matters**: MetaGPT's `CostManager` with `NoMoneyException`
+provides a safety net. Team.invest() sets a budget, and the system
+stops when costs exceed it.
 
-**Problem**: AgentLaboratory uses the same model for all tasks in a phase.
-AI-Researcher uses `COMPLETION_MODEL` for complex tasks and a cheaper model
-for simple ones (e.g., formatting, summarization).
+**Implementation**: Add token counting to `inference.py` for all
+providers (OpenAI already tracked, add Gemini via `usage_metadata`).
+Add a `max_budget` parameter to `LaboratoryWorkflow`. Raise an
+exception when the budget is exhausted.
 
-**Implementation**: Add a `cheap_model` parameter alongside the existing
-model backbone. Use it for: log summarization, simple formatting, status
-checks, and monitoring tasks. Route expensive tasks (code generation,
-review, planning) to the full model.
+### Priority 4: Meta-Agent Pattern (from AutoAgent)
 
-### Priority 4: FlowGraph-based Workflow
+**Problem**: AgentLaboratory has hardcoded agents. AutoAgent's meta-agents
+dynamically create new agents, tools, and workflows based on the task.
 
-**Problem**: AgentLaboratory has a rigid linear phase sequence. If
-experiments fail, it restarts from plan formulation. AI-Researcher's
-FlowGraph allows flexible DAG execution with caching.
+**Why it matters**: Different research tasks need different agent
+configurations. A GNN paper needs different tools than a diffusion paper.
 
-**Implementation**: Replace the linear phase loop in `ai_lab_repo.py`
-with a configurable workflow graph. Allow phases to be re-run selectively
-without restarting the entire pipeline.
+**Implementation**: Add a `MetaAgent` that analyzes the research topic and
+dynamically configures the agent pipeline — selecting which agents to
+activate, what tools to provide, and how to structure the workflow. Start
+simple: let the MetaAgent choose between existing agents and configure
+their parameters rather than generating entirely new agents from scratch.
 
-### Priority 5: Response Caching (FlowCache)
+### Priority 5: Event-Driven Flow Engine (from AutoAgent)
 
-**Problem**: Repeated LLM calls during iteration waste tokens and money.
-AI-Researcher's `FlowCache` caches intermediate results.
+**Problem**: AgentLaboratory's linear phase loop in `ai_lab_repo.py` is
+rigid. AutoAgent's `EventEngine` uses async event-driven execution with
+group triggers, allowing parallel and conditional workflows.
 
-**Implementation**: Add a caching layer to `inference.py` that hashes
-(model + system_prompt + prompt) and returns cached responses for
-identical queries. Use file-based cache with configurable TTL.
+**Why it matters**: Some phases can run in parallel (e.g., literature
+review and data preparation). Failed experiments should trigger
+re-planning without restarting everything.
 
-### Priority 6: Structured Result Analysis
+**Implementation**: Replace the `for subtask in subtasks` loop with an
+event-driven system where phases emit completion events that trigger
+dependent phases. Use Python's `asyncio` for concurrent execution.
 
-**Problem**: AgentLaboratory's results interpretation is freeform.
-AI-Researcher's `ExpAnalyser` agent uses structured analysis templates.
+### Priority 6: Docker-Sandboxed Execution (from AI-Researcher + DeepCode)
 
-**Implementation**: Add structured analysis prompts to the results
-interpretation phase that extract: key metrics, comparisons to baselines,
-failure modes, and specific improvement suggestions.
+**Problem**: AgentLaboratory runs generated code directly on the host.
 
-### Priority 7: Gemini Cost Tracking
+**Why it matters**: Generated ML code can corrupt the environment, consume
+all memory, or run indefinitely. Both AI-Researcher and DeepCode sandbox
+execution in Docker containers.
 
-**Problem**: AgentLaboratory tracks costs for OpenAI models but not Gemini.
+**Implementation**: Route `execute_code()` through Docker when available,
+using the existing Dockerfile. Connect via TCP (AI-Researcher pattern) or
+MCP tool servers (DeepCode/nanobot pattern).
 
-**Implementation**: Add token counting for Gemini API responses using
-`response.usage_metadata` and calculate costs based on Gemini pricing.
+### Priority 7: Structured Evaluation (from DeepResearch-Eval)
 
-### Priority 8: Environment Capabilities System
+**Problem**: AgentLaboratory's ReviewersAgent uses freeform text evaluation.
+DeepResearch-Eval uses structured multi-dimension scoring with fact-checking.
 
-**Problem**: Agents don't know what compute resources are available.
+**Why it matters**: Structured evaluation catches specific failure modes
+(factual errors, missing baselines, weak methodology) that freeform
+review misses.
 
-**Implementation**: Add a capabilities discovery system that detects:
-available GPUs, memory, installed packages, Kaggle availability, and
-Docker availability. Pass this context to agents for better planning.
+**Implementation**: Add structured evaluation prompts (inspired by
+DeepResearch-Eval's `Aprompts.py`) that score on: factual accuracy,
+experimental rigor, novelty, reproducibility, and methodology soundness.
+Add `judge_fact`-style fact-checking for key claims.
+
+### Priority 8: JudgeAgent Quality Gates (from AI-Researcher)
+
+**Problem**: AgentLaboratory only evaluates the final report.
+
+**Implementation**: Add a JudgeAgent that runs after each experiment phase,
+scoring results and deciding whether to iterate or proceed. Uses structured
+scoring criteria rather than freeform review.
+
+### Priority 9: Dual Model Strategy (from AI-Researcher)
+
+**Problem**: Same expensive model for all tasks.
+
+**Implementation**: Use Gemini 3 Flash for: log monitoring, simple
+formatting, status checks, and routine tasks. Reserve Gemini 3 Pro for:
+code generation, complex reasoning, and review.
+
+### Priority 10: Response Caching (from AI-Researcher FlowCache)
+
+**Problem**: Repeated identical LLM calls waste tokens and money.
+
+**Implementation**: Hash (model + system_prompt + prompt) and cache
+responses. Use file-based cache with configurable TTL.
+
+### Priority 11: MCP Tool Servers (from DeepCode/nanobot)
+
+**Problem**: Tools are hardcoded Python functions.
+
+**Why it matters**: DeepCode's nanobot uses MCP (Model Context Protocol)
+tool servers, enabling tools to run in separate processes with proper
+isolation, and allowing dynamic tool discovery.
+
+**Implementation**: Wrap existing tools (code execution, file I/O, web
+search) as MCP tool servers. This enables: tool isolation, remote tools,
+and dynamic tool registration.
+
+### Priority 12: Agent/Tool Registry (from AutoAgent)
+
+**Problem**: Agents and tools are imported directly, no runtime discovery.
+
+**Implementation**: Add a registry system where agents, tools, and
+workflows register themselves. The MetaAgent can then discover and compose
+available capabilities at runtime.
+
+### Priority 13: Gemini Cost Tracking
+
+**Problem**: Cost tracking exists for OpenAI but not Gemini.
+
+**Implementation**: Track `response.usage_metadata` for Gemini API calls
+and calculate costs based on current pricing.
+
+### Priority 14: Hierarchical Memory (from MetaGPT)
+
+**Problem**: AgentLaboratory stores conversation history as a flat list
+with a max length of 15. There's no long-term memory, no summarization
+of old context, and no persistent memory across sessions.
+
+**Why it matters**: MetaGPT has 5 memory types: Memory (working),
+LongTermMemory (persistent), BrainMemory (with summarization),
+RoleZeroMemory (foundational), and MemoryStorage (file-backed).
+
+**Implementation**: Add a `BrainMemory`-like summarization layer that
+compresses old conversation history into summaries when the context
+window fills up. Add persistent memory storage so experiments can be
+resumed across sessions with full context.
+
+### Priority 15: QA/Testing Agent (from MetaGPT)
+
+**Problem**: AgentLaboratory generates code but never tests it before
+running. If the code has syntax errors or import issues, the entire
+600-second execution timeout is wasted.
+
+**Why it matters**: MetaGPT's QAEngineer role writes and runs tests
+for generated code before deployment. This catches errors early.
+
+**Implementation**: Add a lightweight `QAAgent` that runs basic
+validation on generated code before execution: syntax check, import
+check, type annotation check. For ML code, validate that the training
+loop structure is correct (has loss.backward(), optimizer.step(), etc.).
+
+### Priority 16: Structured Schema (from MetaGPT)
+
+**Problem**: AgentLaboratory passes data between agents as unstructured
+strings. Parsing relies on regex extraction of JSON/code blocks, which
+is fragile and error-prone.
+
+**Why it matters**: MetaGPT uses Pydantic-based `Message` and
+`Document` types (33KB schema.py) for all inter-agent communication.
+This makes data exchange reliable and debuggable.
+
+**Implementation**: Define Pydantic models for key data types:
+`ExperimentPlan`, `CodeBlock`, `ReviewFeedback`, `ExperimentResult`.
+Use structured output / JSON mode where supported by the LLM provider.
