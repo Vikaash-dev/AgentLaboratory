@@ -84,7 +84,7 @@ def query_model(model_str, prompt, system_prompt, openai_api_key=None, gemini_ap
                     model="gemini-2.5-pro",
                     contents=system_prompt + "\n\n" + prompt,
                     config=genai_types.GenerateContentConfig(
-                        thinking_config=genai_types.ThinkingConfig(thinking_budget=8192)
+                        thinking_config=genai_types.ThinkingConfig(thinking_budget=24576)
                     ),
                 )
                 answer = response.text
@@ -94,7 +94,27 @@ def query_model(model_str, prompt, system_prompt, openai_api_key=None, gemini_ap
                     model="gemini-2.5-flash-preview-05-20",
                     contents=system_prompt + "\n\n" + prompt,
                     config=genai_types.GenerateContentConfig(
-                        thinking_config=genai_types.ThinkingConfig(thinking_budget=1024)
+                        thinking_config=genai_types.ThinkingConfig(thinking_budget=24576)
+                    ),
+                )
+                answer = response.text
+            elif model_str == "gemini-3-pro":
+                client = genai_client.Client(api_key=gemini_api_key)
+                response = client.models.generate_content(
+                    model="gemini-3-pro",
+                    contents=system_prompt + "\n\n" + prompt,
+                    config=genai_types.GenerateContentConfig(
+                        thinking_config=genai_types.ThinkingConfig(thinking_budget=24576)
+                    ),
+                )
+                answer = response.text
+            elif model_str == "gemini-3-flash":
+                client = genai_client.Client(api_key=gemini_api_key)
+                response = client.models.generate_content(
+                    model="gemini-3-flash",
+                    contents=system_prompt + "\n\n" + prompt,
+                    config=genai_types.GenerateContentConfig(
+                        thinking_config=genai_types.ThinkingConfig(thinking_budget=24576)
                     ),
                 )
                 answer = response.text

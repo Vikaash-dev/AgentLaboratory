@@ -84,20 +84,26 @@ class TestNotebookMetadata(unittest.TestCase):
 
 
 class TestInferenceGeminiSupport(unittest.TestCase):
-    """Tests for Gemini 2.5 Pro and Flash support in inference.py."""
+    """Tests for Gemini 3 Pro and Flash support in inference.py."""
 
     def test_gemini_model_string_recognized(self):
         """Verify the model string is handled in query_model code."""
         with open(os.path.join(os.path.dirname(__file__), "inference.py")) as f:
             source = f.read()
-        self.assertIn("gemini-2.5-pro", source)
+        self.assertIn("gemini-3-pro", source)
         self.assertIn("thinking_budget", source)
 
     def test_gemini_flash_model_recognized(self):
-        """Verify Gemini 2.5 Flash is supported for monitoring."""
+        """Verify Gemini 3 Flash is supported for monitoring."""
         with open(os.path.join(os.path.dirname(__file__), "inference.py")) as f:
             source = f.read()
-        self.assertIn("gemini-2.5-flash", source)
+        self.assertIn("gemini-3-flash", source)
+
+    def test_max_thinking_budget(self):
+        """Verify max thinking budget (24576) is set for Gemini models."""
+        with open(os.path.join(os.path.dirname(__file__), "inference.py")) as f:
+            source = f.read()
+        self.assertIn("thinking_budget=24576", source)
 
     @patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}, clear=False)
     def test_gemini_api_key_loaded_from_env(self):
@@ -381,16 +387,16 @@ class TestMonitoringAgent(unittest.TestCase):
     """Tests for MonitoringAgent model configuration."""
 
     def test_monitoring_uses_flash_model(self):
-        """MonitoringAgent should use Gemini 2.5 Flash for efficiency."""
+        """MonitoringAgent should use Gemini 3 Flash for efficiency."""
         with open(os.path.join(os.path.dirname(__file__), "pipeline_subagents.py")) as f:
             source = f.read()
-        self.assertIn('MONITORING_MODEL = "gemini-2.5-flash"', source)
+        self.assertIn('MONITORING_MODEL = "gemini-3-flash"', source)
 
     def test_thinking_model_is_pro(self):
-        """Other agents should use Gemini 2.5 Pro for deep analysis."""
+        """Other agents should use Gemini 3 Pro for deep analysis."""
         with open(os.path.join(os.path.dirname(__file__), "pipeline_subagents.py")) as f:
             source = f.read()
-        self.assertIn('THINKING_MODEL = "gemini-2.5-pro"', source)
+        self.assertIn('THINKING_MODEL = "gemini-3-pro"', source)
 
 
 class TestPipelineSubAgentIntegration(unittest.TestCase):

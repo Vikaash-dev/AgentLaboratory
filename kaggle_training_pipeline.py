@@ -125,7 +125,7 @@ class KaggleTrainingPipeline:
         cpu_test_agent   — Creates CPU-only validation version
         gpu_agent        — Creates full GPU-accelerated training version
         error_agent      — Analyzes execution logs and diagnoses problems
-        monitor_agent    — Gemini 2.5 Flash for real-time progress monitoring
+        monitor_agent    — Gemini 3 Flash for real-time progress monitoring
 
     Workflow per iteration:
         1. ResearchAgent gathers context (Tavily + static best practices)
@@ -180,7 +180,7 @@ class KaggleTrainingPipeline:
         return self._research_context
 
     def _query_gemini(self, prompt, system_prompt):
-        """Query Gemini 2.5 Pro with high thinking for code generation."""
+        """Query Gemini with high thinking for code generation."""
         return query_model(
             model_str=PIPELINE_MODEL,
             prompt=prompt,
@@ -315,7 +315,7 @@ IMPORTANT:
     def submit_and_monitor(self, code, title, enable_gpu=False):
         """
         Submit code to Kaggle and monitor execution via log polling.
-        Uses MonitoringAgent (Gemini 2.5 Flash) for real-time assessment.
+        Uses MonitoringAgent (Gemini 3 Flash) for real-time assessment.
 
         @param code: (str) Python code to execute
         @param title: (str) notebook title
@@ -357,7 +357,7 @@ IMPORTANT:
         logs_data = retrieve_notebook_logs(kernel_ref, output_dir=log_dir)
         parsed = parse_pipeline_logs(logs_data.get("log_content", ""))
 
-        # MonitoringAgent (Gemini 2.5 Flash) provides lightweight assessment
+        # MonitoringAgent (Gemini 3 Flash) provides lightweight assessment
         log_content = logs_data.get("log_content", "")
         if log_content:
             monitor_result = self.monitor_agent.assess_progress(

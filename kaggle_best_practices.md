@@ -104,7 +104,7 @@ dataloader = DataLoader(
 
 ## 4. Monitoring Sub-Agent Best Practices
 
-### For the Monitoring Agent (Gemini 2.5 Flash)
+### For the Monitoring Agent (Gemini 3 Flash)
 - Use lightweight model (Flash) for cost efficiency during monitoring
 - Check logs every 20-30 seconds for real-time feedback
 - Parse structured log tags to extract metrics automatically
@@ -115,7 +115,7 @@ dataloader = DataLoader(
   - Memory usage > 90%
   - Same error repeated 3+ times
 
-### For the Code Review Agent (Gemini 2.5 Pro)
+### For the Code Review Agent (Gemini 3 Pro)
 - Use high-thinking model for thorough code analysis
 - Check for: device mismatches, missing imports, data leaks, memory leaks
 - Verify Kaggle constraints: file paths, internet access, time limits

@@ -14,7 +14,7 @@ Sub-agents:
     CPUTestAgent        — Adapts code for CPU-only validation run.
     GPUTrainingAgent    — Adapts code for full GPU training with acceleration best practices.
     ErrorAnalysisAgent  — Analyzes execution logs/errors and produces diagnosis.
-    MonitoringAgent     — Lightweight agent (Gemini 2.5 Flash) for real-time log monitoring.
+    MonitoringAgent     — Lightweight agent (Gemini 3 Flash) for real-time log monitoring.
 """
 
 import os
@@ -25,8 +25,8 @@ from inference import query_model
 logger = logging.getLogger(__name__)
 
 # Models used by sub-agents
-THINKING_MODEL = "gemini-2.5-pro"       # For code generation, review, fixing
-MONITORING_MODEL = "gemini-2.5-flash"   # For lightweight monitoring
+THINKING_MODEL = "gemini-3-pro"         # For code generation, review, fixing
+MONITORING_MODEL = "gemini-3-flash"     # For lightweight monitoring
 
 
 def _query(model_str, prompt, system_prompt, gemini_api_key=None):
@@ -536,11 +536,11 @@ FIXES:
         }
 
 
-# ─── MonitoringAgent (Gemini 2.5 Flash) ──────────────────────────────────
+# ─── MonitoringAgent (Gemini 3 Flash) ──────────────────────────────────
 
 class MonitoringAgent:
     """
-    Lightweight agent using Gemini 2.5 Flash for real-time training
+    Lightweight agent using Gemini 3 Flash for real-time training
     progress monitoring. Parses logs and provides quick status assessments.
     """
 

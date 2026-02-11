@@ -17,8 +17,8 @@ improvement opportunities. These suggestions are based on patterns found in:
   reproducible ML environments, with docker-compose for CPU and GPU profiles
 - **Kaggle API integration**: `kaggle_utils.py` for dataset listing, notebook
   submission, and remote GPU training
-- **Gemini 2.5 Pro with high thinking**: Extended thinking mode support using
-  the new `google-genai` client with `ThinkingConfig(thinking_budget=8192)`
+- **Gemini 3 Pro with max thinking**: Extended thinking mode support using
+  the new `google-genai` client with `ThinkingConfig(thinking_budget=24576)`
 - **Gemini-only key support**: `inference.py` now allows running with only a
   Gemini API key (no longer requires OpenAI or Anthropic)
 
