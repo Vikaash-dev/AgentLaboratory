@@ -3,6 +3,8 @@ import time, tiktoken
 from openai import OpenAI
 import os, anthropic, json
 import google.generativeai as genai
+from google import genai as genai_client
+from google.genai import types as genai_types
 
 TOKENS_IN = dict()
 TOKENS_OUT = dict()
@@ -36,7 +38,10 @@ def query_model(model_str, prompt, system_prompt, openai_api_key=None, gemini_ap
     preloaded_api = os.getenv('OPENAI_API_KEY')
     if openai_api_key is None and preloaded_api is not None:
         openai_api_key = preloaded_api
-    if openai_api_key is None and anthropic_api_key is None:
+    preloaded_gemini = os.getenv('GEMINI_API_KEY')
+    if gemini_api_key is None and preloaded_gemini is not None:
+        gemini_api_key = preloaded_gemini
+    if openai_api_key is None and anthropic_api_key is None and gemini_api_key is None:
         raise Exception("No API key provided in query_model function")
     if openai_api_key is not None:
         openai.api_key = openai_api_key
@@ -73,6 +78,16 @@ def query_model(model_str, prompt, system_prompt, openai_api_key=None, gemini_ap
                             model="gpt-4o-mini-2024-07-18", messages=messages, temperature=temp)
                 answer = completion.choices[0].message.content
 
+            elif model_str == "gemini-2.5-pro":
+                client = genai_client.Client(api_key=gemini_api_key)
+                response = client.models.generate_content(
+                    model="gemini-2.5-pro",
+                    contents=system_prompt + "\n\n" + prompt,
+                    config=genai_types.GenerateContentConfig(
+                        thinking_config=genai_types.ThinkingConfig(thinking_budget=8192)
+                    ),
+                )
+                answer = response.text
             elif model_str == "gemini-2.0-pro":
                 genai.configure(api_key=gemini_api_key)
                 model = genai.GenerativeModel(model_name="gemini-2.0-pro-exp-02-05", system_instruction=system_prompt)
